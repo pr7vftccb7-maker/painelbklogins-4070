@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, Redirect } from "wouter";
-import { LayoutGrid, AlertTriangle, Settings, LogOut, Loader2, Menu, X, Boxes, Users, Wallet, ClipboardList, ShoppingBag } from "lucide-react";
+import { LayoutGrid, AlertTriangle, Settings, LogOut, Loader2, Menu, X, Boxes, Users, Wallet, ClipboardList, ShoppingBag, UserCheck } from "lucide-react";
 import { authClient } from "../lib/auth";
 import { useSummary } from "../lib/accounts";
 import { api } from "../lib/api";
@@ -116,6 +116,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
           icon={ClipboardList}
           label="Pedidos da Loja"
           active={location === "/pedidos"}
+        />
+        <NavItem
+          href="/clientes-cadastrados"
+          icon={UserCheck}
+          label="Clientes Cadastrados"
+          active={location === "/clientes-cadastrados"}
         />
 
         <div className="my-2 border-t border-border/50" />
