@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../database";
 import { user } from "../database/auth-schema";
+import { accounts, shopOrders } from "../database/schema";
 import { eq, and } from "drizzle-orm";
 import { authMiddleware } from "../middleware/auth";
 import { auth } from "../auth";
@@ -77,8 +78,6 @@ app.post("/login", async (c) => {
       .limit(1);
 
     if (u.length === 0 || u[0].role !== "customer") {
-      // Não é cliente — faz logout
-      await auth.api.signOut({ headers: c.req.raw.headers } as any);
       return c.json({ error: "Acesso não autorizado. Use o portal do cliente." }, 403);
     }
 
@@ -90,6 +89,67 @@ app.post("/login", async (c) => {
     });
   } catch (err: any) {
     return c.json({ error: err?.message || "Email ou senha inválidos." }, 401);
+  }
+});
+
+// Rota autenticada: minhas contas (cliente logado vê suas contas compradas)
+app.get("/my-accounts", authMiddleware, async (c) => {
+  try {
+    const session = c.get("session");
+    const u = c.get("user");
+    if (!session || !u) return c.json({ error: "Não autenticado." }, 401);
+
+    // Busca pedidos aprovados deste cliente (pelo email)
+    const orders = await db
+      .select({
+        id: shopOrders.id,
+        service: shopOrders.service,
+        deliveredEmail: shopOrders.deliveredEmail,
+        deliveredPassword: shopOrders.deliveredPassword,
+        deliveredAt: shopOrders.deliveredAt,
+        status: shopOrders.status,
+        createdAt: shopOrders.createdAt,
+      })
+      .from(shopOrders)
+      .where(
+        and(
+          eq(shopOrders.customerEmail, u.email.toLowerCase().trim()),
+          eq(shopOrders.status, "approved"),
+        )
+      )
+      .orderBy(shopOrders.createdAt);
+
+    // Também busca contas associadas diretamente na tabela accounts via email do cliente
+    const directAccounts = await db
+      .select({
+        id: accounts.id,
+        service: accounts.service,
+        email: accounts.email,
+        password: accounts.password,
+        dueDate: accounts.dueDate,
+        status: accounts.status,
+      })
+      .from(accounts)
+      .where(eq(accounts.email, u.email.toLowerCase().trim()));
+
+    // Junta os dois resultados
+    const result = [
+      ...orders.map((o) => ({
+        id: o.id,
+        service: o.service,
+        email: o.deliveredEmail ?? "",
+        password: o.deliveredPassword ?? "",
+        dueDate: "",
+        status: "ativa",
+        deliveredAt: o.deliveredAt ? new Date(o.deliveredAt).toISOString() : null,
+      })),
+      ...directAccounts,
+    ];
+
+    return c.json(result);
+  } catch (err) {
+    console.error("my-accounts error:", err);
+    return c.json({ error: "Erro ao buscar contas." }, 500);
   }
 });
 
