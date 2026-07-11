@@ -9,6 +9,8 @@ export const user = sqliteTable("user", {
     .default(false)
     .notNull(),
   image: text("image"),
+  // role: "admin" = dono do painel | "customer" = cliente do portal
+  role: text("role").notNull().default("admin"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
     .notNull(),
