@@ -1,412 +1,565 @@
-import { useState } from "react";
-import { motion } from "motion/react";
-import { toast } from "sonner";
-import { ShoppingBag, Loader2, CreditCard, CheckCircle2, Copy, ExternalLink, Search, X } from "lucide-react";
-import { useLocation, useRoute, Link } from "wouter";
-import { useCatalog, useCheckout, useOrder, type CatalogProduct } from "../lib/shop";
-import { useServices, useServiceMap } from "../lib/services";
-import { SERVICE_MAP } from "../../shared/services";
-import { logoUrl } from "../lib/utils";
+import { useState, useEffect } from "react";
+import { useRoute, useLocation, Link } from "wouter";
+import { motion, AnimatePresence } from "motion/react";
+import {
+  ShoppingBag,
+  ShoppingCart,
+  Search,
+  X,
+  Loader2,
+  CheckCircle2,
+  ArrowLeft,
+  Copy,
+  ShieldCheck,
+  Store,
+  User,
+} from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { Modal } from "../components/ui/modal";
 
-function ServiceLogo({ slug, size = "size-10" }: { slug: string; size?: string }) {
-  const dynamicMap = useServiceMap();
-  const svc = dynamicMap[slug] ?? SERVICE_MAP[slug];
-  if (!svc) return null;
-  return (
-    <div className={`flex ${size} items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-black/5`}>
-      {svc.logo ? (
-        <img src={logoUrl(svc.logo)} alt={svc.name} className="size-full object-contain p-1.5" loading="lazy" />
-      ) : (
-        <span
-          className="flex size-full items-center justify-center text-xs font-bold text-white"
-          style={{ backgroundColor: svc.color }}
-        >
-          {svc.short || svc.name.slice(0, 2).toUpperCase()}
-        </span>
-      )}
-    </div>
-  );
+// Detecta se o cliente está logado no portal
+function getStoredCustomer() {
+  try {
+    const token = localStorage.getItem("customer_token");
+    const user = localStorage.getItem("customer_user");
+    if (token && user) {
+      return JSON.parse(user) as { name: string; email: string; id: string };
+    }
+  } catch { /* */ }
+  return null;
+}
+
+type Product = {
+  id: string;
+  service: string;
+  serviceName: string;
+  serviceColor: string;
+  serviceLogo: string;
+  serviceShort: string;
+  priceCents: number;
+  priceFormatted: string;
+};
+
+type CatalogRes = { catalog: Product[] };
+type ProductRes = { product: Product };
+type OrderRes = {
+  order: {
+    id: string;
+    status: string;
+    priceCents: number;
+    priceFormatted: string;
+    service: string;
+    createdAt: string;
+  };
+  paymentUrl?: string | null;
+};
+
+const SRV: Record<string, { label: string; logo?: string }> = {
+  netflix: { label: "Netflix", logo: "https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/nixos/nixos-original.svg" },
+  disney: { label: "Disney+" },
+  hbomax: { label: "Max" },
+  prime: { label: "Prime Video" },
+  spotify: { label: "Spotify" },
+  globoplay: { label: "Globoplay" },
+  "globoplay-telecine": { label: "Globoplay + Telecine" },
+  premiere: { label: "Premiere" },
+  youtube: { label: "YouTube" },
+  paramount: { label: "Paramount+" },
+};
+
+const SERVICE_COLORS: Record<string, string> = {
+  netflix: "#e50914",
+  disney: "#113ccf",
+  hbomax: "#5822b4",
+  prime: "#00a8e1",
+  spotify: "#1db954",
+  globoplay: "#e11d48",
+  "globoplay-telecine": "#cf022b",
+  premiere: "#690496",
+  youtube: "#ff0000",
+  paramount: "#0064ff",
+};
+
+function serviceLabel(slug: string) {
+  return SRV[slug]?.label ?? slug;
+}
+
+function fmtPrice(cents: number) {
+  return `R$ ${(cents / 100).toFixed(2).replace(".", ",")}`;
 }
 
 export default function ShopPage() {
-  const [location, navigate] = useLocation();
-  const [matchCheckout, paramsCheckout] = useRoute("/loja/checkout/:id");
-  const [matchSuccess, paramsSuccess] = useRoute("/loja/sucesso/:id");
+  // Rotas: /loja (catálogo), /loja/checkout/:id (checkout), /loja/sucesso/:id (pós-compra)
+  const [, matchCheckout, checkoutId] = useRoute("/loja/checkout/:id") ?? [false, null, null];
+  const [, matchSuccess, successId] = useRoute("/loja/sucesso/:id") ?? [false, null, null];
 
-  if (matchCheckout && paramsCheckout?.id) {
-    return <CheckoutPage productId={paramsCheckout.id} />;
-  }
-  if (matchSuccess && paramsSuccess?.id) {
-    return <SuccessPage orderId={paramsSuccess.id} />;
-  }
-  return <CatalogPage />;
+  if (matchCheckout && checkoutId) return <Checkout productId={checkoutId} />;
+  if (matchSuccess && successId) return <Success orderId={successId} />;
+  return <Catalog />;
 }
 
-function CatalogPage() {
-  const [selectedService, setSelectedService] = useState<string>("");
+function Catalog() {
+  const [catalog, setCatalog] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("");
   const [search, setSearch] = useState("");
-  const { data: catalog, isPending } = useCatalog(selectedService || undefined);
-  const { data: dynServices } = useServices();
-  const svcMap = useServiceMap();
-  const nameOf = (slug: string) => svcMap[slug]?.name ?? SERVICE_MAP[slug]?.name ?? slug;
+  const customer = getStoredCustomer();
 
-  const filtered = (catalog ?? []).filter((p) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    const haystack = `${nameOf(p.service)} ${p.serviceName}`.toLowerCase();
-    return haystack.includes(q);
-  });
+  useEffect(() => {
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (filter) params.set("service", filter);
+
+    fetch(`/api/shop/catalog?${params.toString()}`)
+      .then((r) => r.json())
+      .then((d: CatalogRes) => setCatalog(d.catalog ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [filter]);
+
+  const services = [...new Set(catalog.map((p) => p.service))];
+
+  const displayed = search
+    ? catalog.filter(
+        (p) =>
+          p.serviceName.toLowerCase().includes(search.toLowerCase()) ||
+          p.serviceShort?.toLowerCase().includes(search.toLowerCase()),
+      )
+    : catalog;
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
+    <div className="min-h-screen bg-[#0a0a0f]">
+      <header className="sticky top-0 z-40 border-b border-border bg-sidebar/95 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary text-white">
-              <ShoppingBag className="size-5" />
+            <div className="flex size-9 items-center justify-center rounded-xl bg-primary/20 text-primary">
+              <Store className="size-5" />
             </div>
             <div>
-              <h1 className="font-brand text-lg font-extrabold">BKLOGINS</h1>
-              <p className="text-xs text-muted-foreground">Assinaturas</p>
+              <div className="font-brand text-base font-extrabold text-glow-red">BKLOGINS</div>
+              <div className="text-xs text-muted-foreground">Loja de Contas</div>
             </div>
           </div>
-          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-            Área do Cliente
-          </Link>
+
+          <div className="flex items-center gap-3">
+            {customer ? (
+              <Link
+                href="/portal"
+                className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-[#00a8e1] hover:bg-[#00a8e1]/10 transition-colors"
+              >
+                <User className="size-4" />
+                Minhas Contas
+              </Link>
+            ) : (
+              <Link
+                href="/portal"
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+              >
+                Entrar
+              </Link>
+            )}
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-8">
+      <main className="mx-auto max-w-5xl px-4 py-8">
+        {/* Hero */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
+          className="mb-10 text-center"
         >
-          <h2 className="mb-2 font-display text-3xl font-bold">Escolha sua assinatura</h2>
-          <p className="mb-8 text-muted-foreground">
-            Contas premium com garantia. Pagamento rápido e entrega automática.
+          <h1 className="font-display text-3xl font-bold md:text-4xl">
+            Contas Premium
+          </h1>
+          <p className="mt-2 text-muted-foreground">
+            Escolha seu serviço e garanta já sua conta — entrega rápida após confirmação.
           </p>
         </motion.div>
 
-        {/* Barra de busca */}
-        <div className="mb-6 relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por serviço..."
-            className="pl-9 pr-9"
-          />
-          {search && (
+        {/* Busca + Filtros */}
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar serviço..."
+              className="pl-9"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => setSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              <X className="size-4" />
-            </button>
-          )}
-        </div>
-
-        {/* Filtro por serviço */}
-        <div className="mb-8 flex flex-wrap gap-2">
-          <button
-            onClick={() => setSelectedService("")}
-            className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-              selectedService === ""
-                ? "bg-primary text-white"
-                : "bg-secondary text-muted-foreground hover:bg-secondary/80 hover:text-foreground"
-            }`}
-          >
-            Todos
-          </button>
-          {(dynServices ?? []).map((svc) => (
-            <button
-              key={svc.slug}
-              onClick={() => setSelectedService(svc.slug)}
-              className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-                selectedService === svc.slug
-                  ? "bg-primary text-white"
-                  : "bg-secondary text-muted-foreground hover:bg-secondary/80 hover:text-foreground"
+              onClick={() => setFilter("")}
+              className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                !filter
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-muted-foreground hover:text-foreground"
               }`}
             >
-              {svc.name}
+              Todos
             </button>
-          ))}
+            {["netflix", "prime", "disney", "hbomax", "spotify", "globoplay", "premiere", "youtube", "paramount"].map(
+              (s) => {
+                const count = catalog.filter((p) => p.service === s).length;
+                if (count === 0 && filter !== s) return null;
+                return (
+                  <button
+                    key={s}
+                    onClick={() => setFilter(filter === s ? "" : s)}
+                    className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                      filter === s
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-secondary text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {SRV[s]?.label ?? s} ({count})
+                  </button>
+                );
+              },
+            )}
+          </div>
         </div>
 
-        {/* Loading */}
-        {isPending && (
-          <div className="flex items-center justify-center py-20">
+        {loading ? (
+          <div className="flex justify-center py-16">
             <Loader2 className="size-8 animate-spin text-muted-foreground" />
           </div>
-        )}
-
-        {/* Grid do catálogo */}
-        {!isPending && filtered.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-border bg-card/50 py-20 text-center">
-            <ShoppingBag className="mx-auto mb-3 size-12 text-muted-foreground/50" />
-            <p className="text-muted-foreground">Nenhuma assinatura disponível no momento.</p>
-            {search && <p className="mt-1 text-sm text-muted-foreground">Tente outro termo de busca.</p>}
-          </div>
-        )}
-
-        {!isPending && filtered.length > 0 && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filtered.map((product) => (
-              <motion.div
-                key={product.id}
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="group flex flex-col rounded-2xl border border-border bg-card p-5 transition-all hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5"
-              >
-                <div className="mb-4 flex items-center gap-3">
-                  <ServiceLogo slug={product.service} size="size-12" />
-                  <div className="min-w-0">
-                    <h3 className="truncate font-display text-base font-semibold">{product.serviceName}</h3>
-                    {product.serviceShort && (
-                      <p className="text-xs text-muted-foreground">{product.serviceShort}</p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-auto flex items-end justify-between">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Preço único</p>
-                    <p className="font-display text-2xl font-bold text-primary">{product.priceFormatted}</p>
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={() => navigate(`/loja/checkout/${product.id}`)}
-                    className="gap-1.5"
+        ) : displayed.length === 0 ? (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col items-center rounded-2xl border border-border bg-card p-12 text-center"
+          >
+            <ShoppingBag className="size-12 text-muted-foreground mb-4" />
+            <h3 className="text-lg font-semibold mb-1">Nenhum produto disponível</h3>
+            <p className="text-sm text-muted-foreground">
+              Novas contas são adicionadas em breve. Volte mais tarde!
+            </p>
+          </motion.div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <AnimatePresence>
+              {displayed.map((product, i) => {
+                const color = SERVICE_COLORS[product.service] ?? product.serviceColor ?? "#e11d48";
+                return (
+                  <motion.div
+                    key={product.id}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.03 }}
+                    className="group rounded-2xl border border-border bg-card p-5 transition-all hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5"
                   >
-                    <CreditCard className="size-4" />
-                    Comprar
-                  </Button>
-                </div>
-              </motion.div>
-            ))}
+                    <div className="mb-4 flex items-center gap-3">
+                      <div
+                        className="flex size-12 items-center justify-center rounded-xl text-white text-lg font-bold shadow-lg"
+                        style={{
+                          backgroundColor: color,
+                          boxShadow: `0 4px 20px ${color}40`,
+                        }}
+                      >
+                        {product.serviceLogo ? (
+                          <img src={product.serviceLogo} alt="" className="size-6 object-contain" />
+                        ) : (
+                          serviceLabel(product.service).slice(0, 2).toUpperCase()
+                        )}
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-foreground">
+                          {product.serviceName || serviceLabel(product.service)}
+                        </h3>
+                        {product.serviceShort && (
+                          <p className="text-xs text-muted-foreground">{product.serviceShort}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mb-4 flex items-baseline gap-1">
+                      <span className="text-2xl font-bold text-foreground">
+                        {product.priceFormatted}
+                      </span>
+                    </div>
+
+                    <Link href={`/loja/checkout/${product.id}`}>
+                      <Button className="w-full" style={{ backgroundColor: color, borderColor: color }}>
+                        <ShoppingCart className="size-4" />
+                        Comprar
+                      </Button>
+                    </Link>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
           </div>
         )}
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-border py-6 text-center text-xs text-muted-foreground">
-        BKLOGINS © {new Date().getFullYear()} — Todas as assinaturas com garantia.
+        BKLOGINS © {new Date().getFullYear()} — Loja de Contas
       </footer>
     </div>
   );
 }
 
-function CheckoutPage({ productId }: { productId: string }) {
+function Checkout({ productId }: { productId: string }) {
   const [, navigate] = useLocation();
-  const { data: catalog } = useCatalog();
-  const checkout = useCheckout();
-  const svcMap = useServiceMap();
-  const nameOf = (slug: string) => svcMap[slug]?.name ?? SERVICE_MAP[slug]?.name ?? slug;
-
-  const product = (catalog ?? []).find((p) => p.id === productId);
-
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const customer = getStoredCustomer();
+  const [product, setProduct] = useState<Product | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [name, setName] = useState(customer?.name ?? "");
+  const [email, setEmail] = useState(customer?.email ?? "");
   const [whatsapp, setWhatsapp] = useState("");
+
+  useEffect(() => {
+    fetch(`/api/shop/product/${productId}`)
+      .then((r) => r.json())
+      .then((d: ProductRes) => {
+        setProduct(d.product);
+      })
+      .catch(() => setError("Erro ao carregar produto."))
+      .finally(() => setLoading(false));
+  }, [productId]);
+
+  async function doCheckout(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setSubmitting(true);
+
+    try {
+      const res = await fetch("/api/shop/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId,
+          customerName: name,
+          customerEmail: email,
+          customerWhatsapp: whatsapp,
+        }),
+      });
+
+      const data = (await res.json()) as { order?: { id: string }; message?: string; paymentUrl?: string | null };
+      if (!res.ok) throw new Error(data.message ?? "Falha no checkout.");
+
+      const orderId = data.order?.id;
+      if (orderId) {
+        if (data.paymentUrl) {
+          window.location.href = data.paymentUrl;
+        } else {
+          navigate(`/loja/sucesso/${orderId}`);
+        }
+      } else {
+        throw new Error("Pedido não criado.");
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#0a0a0f]">
+        <Loader2 className="size-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   if (!product) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-screen items-center justify-center bg-[#0a0a0f]">
         <div className="text-center">
-          <ShoppingBag className="mx-auto mb-3 size-12 text-muted-foreground/50" />
-          <p className="text-muted-foreground">Produto não encontrado.</p>
-          <Button className="mt-4" variant="outline" onClick={() => navigate("/loja")}>
-            Voltar para a loja
-          </Button>
+          <p className="text-destructive mb-4">{error || "Produto não encontrado."}</p>
+          <Link href="/loja">
+            <Button variant="outline">
+              <ArrowLeft className="size-4" /> Voltar para loja
+            </Button>
+          </Link>
         </div>
       </div>
     );
   }
 
-  async function handleCheckout() {
-    try {
-      const r = await checkout.mutateAsync({
-        productId: product!.id,
-        customerName: name,
-        customerEmail: email,
-        customerWhatsapp: whatsapp,
-      });
-      if (r.paymentUrl) {
-        navigate(`/loja/sucesso/${r.order.id}`);
-        window.open(r.paymentUrl, "_blank", "noopener");
-      } else {
-        navigate(`/loja/sucesso/${r.order.id}`);
-      }
-    } catch {
-      toast.error("Falha ao criar pedido. Tente novamente.");
-    }
-  }
+  const color = SERVICE_COLORS[product.service] ?? product.serviceColor ?? "#e11d48";
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-4">
-          <button onClick={() => navigate("/loja")} className="text-sm text-muted-foreground hover:text-foreground">
-            ← Voltar
-          </button>
-          <div className="font-brand text-base font-extrabold">BKLOGINS</div>
-          <div className="w-10" />
+    <div className="min-h-screen bg-[#0a0a0f]">
+      <header className="sticky top-0 z-40 border-b border-border bg-sidebar/95 backdrop-blur">
+        <div className="mx-auto flex max-w-xl items-center gap-3 px-4 py-3">
+          <Link href="/loja" className="text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="size-5" />
+          </Link>
+          <div>
+            <div className="font-brand text-base font-extrabold text-glow-red">BKLOGINS</div>
+            <div className="text-xs text-muted-foreground">Checkout</div>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-2xl px-4 py-8">
-        <h2 className="mb-6 font-display text-2xl font-bold">Finalizar pedido</h2>
-
-        {/* Card do produto */}
-        <div className="mb-6 flex items-center gap-4 rounded-2xl border border-border bg-card p-4">
-          <ServiceLogo slug={product.service} size="size-14" />
-          <div>
-            <h3 className="text-lg font-semibold">{nameOf(product.service)}</h3>
-            <p className="text-sm text-muted-foreground">Licença única — entrega imediata</p>
-          </div>
-          <div className="ml-auto text-right">
-            <p className="text-xs text-muted-foreground">Total</p>
-            <p className="font-display text-xl font-bold text-primary">{product.priceFormatted}</p>
-          </div>
-        </div>
-
-        {/* Formulário */}
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label>Nome (opcional)</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Seu nome"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Email (opcional)</Label>
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="seu@email.com"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>WhatsApp (opcional)</Label>
-            <Input
-              value={whatsapp}
-              onChange={(e) => setWhatsapp(e.target.value)}
-              placeholder="(11) 99999-9999"
-            />
+      <main className="mx-auto max-w-xl px-4 py-8">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-2xl border border-border bg-card p-6"
+        >
+          {/* Resumo do produto */}
+          <div className="mb-6 flex items-center gap-4 rounded-xl bg-secondary/40 p-4">
+            <div
+              className="flex size-12 items-center justify-center rounded-xl text-white text-lg font-bold"
+              style={{ backgroundColor: color }}
+            >
+              {product.serviceLogo ? (
+                <img src={product.serviceLogo} alt="" className="size-6 object-contain" />
+              ) : (
+                serviceLabel(product.service).slice(0, 2).toUpperCase()
+              )}
+            </div>
+            <div>
+              <h3 className="font-semibold text-foreground">
+                {product.serviceName || serviceLabel(product.service)}
+              </h3>
+              <p className="text-2xl font-bold text-foreground">{product.priceFormatted}</p>
+            </div>
           </div>
 
-          <Button
-            onClick={handleCheckout}
-            disabled={checkout.isPending}
-            className="mt-2 w-full"
-            size="lg"
-          >
-            {checkout.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <CreditCard className="size-4" />
+          {/* Formulário */}
+          <form onSubmit={doCheckout} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label>Nome</Label>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Seu nome"
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Email</Label>
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="voce@email.com"
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>WhatsApp (opcional)</Label>
+              <Input
+                value={whatsapp}
+                onChange={(e) => setWhatsapp(e.target.value)}
+                placeholder="(11) 99999-9999"
+              />
+            </div>
+
+            {error && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </div>
             )}
-            Pagar com Mercado Pago
-          </Button>
-        </div>
+
+            <Button type="submit" size="lg" disabled={submitting} className="mt-2">
+              {submitting ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
+              Finalizar Pedido
+            </Button>
+          </form>
+
+          <div className="mt-4 flex items-center gap-2 rounded-lg bg-secondary/30 p-3 text-xs text-muted-foreground">
+            <ShieldCheck className="size-4 text-[#2fbf71]" />
+            Após a confirmação, os dados de acesso aparecerão no seu portal.
+          </div>
+
+          {!customer && (
+            <div className="mt-3 text-center text-xs text-muted-foreground">
+              Já tem conta?{" "}
+              <Link href="/portal" className="text-primary hover:underline font-medium">
+                Faça login no portal
+              </Link>{" "}
+              para acompanhar seus pedidos.
+            </div>
+          )}
+        </motion.div>
       </main>
     </div>
   );
 }
 
-function SuccessPage({ orderId }: { orderId: string }) {
-  const [, navigate] = useLocation();
-  const { data, isPending } = useOrder(orderId);
+function Success({ orderId }: { orderId: string }) {
+  const [status, setStatus] = useState<string>("pending");
+  const [loading, setLoading] = useState(true);
 
-  const statusLabel: Record<string, { label: string; color: string }> = {
-    pending: { label: "Aguardando pagamento", color: "text-amber-500" },
-    approved: { label: "Pagamento aprovado!", color: "text-[#2fbf71]" },
-    rejected: { label: "Pagamento recusado", color: "text-[#F0484B]" },
-    cancelled: { label: "Cancelado", color: "text-muted-foreground" },
-    refunded: { label: "Reembolsado", color: "text-muted-foreground" },
-  };
+  useEffect(() => {
+    fetch(`/api/shop/order/${orderId}`)
+      .then((r) => r.json())
+      .then((d: OrderRes) => {
+        setStatus(d.order.status);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+
+    const t = setInterval(() => {
+      fetch(`/api/shop/order/${orderId}`)
+        .then((r) => r.json())
+        .then((d: OrderRes) => {
+          if (d.order.status !== status) setStatus(d.order.status);
+        })
+        .catch(() => {});
+    }, 5000);
+
+    return () => clearInterval(t);
+  }, [orderId]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-4">
-          <button onClick={() => navigate("/loja")} className="text-sm text-muted-foreground hover:text-foreground">
-            ← Voltar para a loja
-          </button>
-          <div className="font-brand text-base font-extrabold">BKLOGINS</div>
-          <div className="w-10" />
+    <div className="flex min-h-screen items-center justify-center bg-[#0a0a0f] px-4">
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md rounded-2xl border border-border bg-card p-8 text-center"
+      >
+        <div className="mb-4 flex justify-center">
+          {status === "approved" ? (
+            <div className="flex size-16 items-center justify-center rounded-full bg-[#2fbf71]/15">
+              <CheckCircle2 className="size-8 text-[#2fbf71]" />
+            </div>
+          ) : (
+            <div className="flex size-16 items-center justify-center rounded-full bg-[#f5a524]/15">
+              <Loader2 className="size-8 animate-spin text-[#f5a524]" />
+            </div>
+          )}
         </div>
-      </header>
 
-      <main className="mx-auto max-w-lg px-4 py-12 text-center">
-        {isPending ? (
-          <Loader2 className="mx-auto mb-4 size-10 animate-spin text-muted-foreground" />
-        ) : data ? (
-          <>
-            <div className="mx-auto mb-6 flex size-20 items-center justify-center rounded-full bg-[#2fbf71]/15">
-              {data.status === "approved" ? (
-                <CheckCircle2 className="size-10 text-[#2fbf71]" />
-              ) : data.status === "pending" ? (
-                <Loader2 className="size-10 animate-spin text-amber-500" />
-              ) : (
-                <X className="size-10 text-[#F0484B]" />
-              )}
-            </div>
+        <h2 className="font-display text-xl font-bold mb-2">
+          {status === "approved" ? "Pedido aprovado!" : "Pedido recebido!"}
+        </h2>
+        <p className="text-muted-foreground mb-2">
+          {status === "approved"
+            ? "Seus dados de acesso já estão disponíveis."
+            : "Seu pedido está em análise. Você receberá os dados em breve."}
+        }
 
-            <h2 className="mb-2 font-display text-2xl font-bold">
-              {data.status === "approved" ? "Pedido confirmado!" : data.status === "pending" ? "Pagamento pendente" : "Pedido não finalizado"}
-            </h2>
+        <div className="mb-6 rounded-lg bg-secondary/40 px-3 py-2">
+          <p className="text-xs text-muted-foreground">ID do pedido:</p>
+          <p className="font-mono text-sm text-foreground">{orderId}</p>
+        </div>
 
-            <p className={`mb-6 font-medium ${statusLabel[data.status]?.color ?? "text-muted-foreground"}`}>
-              {statusLabel[data.status]?.label ?? data.status}
-            </p>
-
-            <div className="rounded-2xl border border-border bg-card p-5 text-left">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-muted-foreground">Pedido</span>
-                <span className="font-mono text-xs">{data.id.slice(0, 8)}...</span>
-              </div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-muted-foreground">Serviço</span>
-                <span className="font-medium">{data.service}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Valor</span>
-                <span className="font-display font-bold text-primary">{data.priceFormatted}</span>
-              </div>
-            </div>
-
-            {data.status === "pending" && (
-              <p className="mt-6 text-sm text-muted-foreground">
-                Complete o pagamento na janela do Mercado Pago que abriu.
-                Se já pagou, aguarde a confirmação — pode levar até 2 minutos.
-              </p>
-            )}
-
-            {data.status === "approved" && (
-              <Button className="mt-6" onClick={() => navigate("/loja")}>
-                <ShoppingBag className="size-4" />
-                Comprar outra assinatura
-              </Button>
-            )}
-          </>
-        ) : (
-          <>
-            <p className="text-muted-foreground">Pedido não encontrado.</p>
-            <Button className="mt-4" variant="outline" onClick={() => navigate("/loja")}>
-              Voltar para a loja
+        <div className="flex flex-col gap-3">
+          <Link href="/portal">
+            <Button className="w-full">
+              <User className="size-4" />
+              Acessar Minhas Contas
             </Button>
-          </>
-        )}
-      </main>
+          </Link>
+          <Link href="/loja">
+            <Button variant="outline" className="w-full">
+              <Store className="size-4" />
+              Continuar Comprando
+            </Button>
+          </Link>
+        </div>
+      </motion.div>
     </div>
   );
 }
