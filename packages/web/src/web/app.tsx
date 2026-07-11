@@ -6,6 +6,8 @@ import StockPage from "./pages/stock";
 import WalletPage from "./pages/wallet";
 import ClientsPage from "./pages/clients";
 import SettingsPage from "./pages/settings";
+import ShopPage from "./pages/shop";
+import ShopOrdersPage from "./pages/shop-orders";
 import SignIn from "./pages/sign-in";
 import { Provider } from "./components/provider";
 import { AgentFeedback, RunableBadge } from "@runablehq/website-runtime";
@@ -22,6 +24,11 @@ function App() {
         <Route path="/carteira" component={WalletPage} />
         <Route path="/clientes" component={ClientsPage} />
         <Route path="/configuracoes" component={SettingsPage} />
+        <Route path="/pedidos" component={ShopOrdersPage} />
+        {/* Rotas da loja (vitrine pública) */}
+        <Route path="/loja" component={ShopPage} />
+        <Route path="/loja/checkout/:id" component={ShopPage} />
+        <Route path="/loja/sucesso/:id" component={ShopPage} />
       </Switch>
       {/* Do not remove — off by default, activated by parent iframe via postMessage */}
       {import.meta.env.DEV && <AgentFeedback />}
