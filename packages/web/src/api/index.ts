@@ -11,6 +11,7 @@ import { walletRoute } from "./routes/wallet";
 import { backupRoute } from "./routes/backup";
 import { twofaRoute } from "./routes/twofa";
 import { shopRoute, shopAdminRoute } from "./routes/shop";
+import customersRoute from "./routes/customers";
 
 type Variables = {
   user: typeof auth.$Infer.Session.user | null;
@@ -25,6 +26,8 @@ const app = new Hono<{ Variables: Variables }>()
   .get("/health", (c) => c.json({ status: "ok" }, 200))
   // Rotas públicas da loja (não exigem auth)
   .route("/shop", shopRoute)
+  // Rota pública de cadastro/login de clientes
+  .route("/customers", customersRoute)
   // 2FA: acessível logo após o login, ANTES de liberar as rotas de dados.
   .route("/twofa", twofaRoute)
   // Rotas de dados: exigem que o 2FA já tenha sido validado neste dispositivo.
@@ -36,6 +39,7 @@ const app = new Hono<{ Variables: Variables }>()
   .use("/backup/*", require2fa)
   .use("/settings/*", require2fa)
   .use("/shop/admin/*", require2fa)
+  .use("/customers/admin/*", require2fa)
   .route("/accounts", accountsRoute)
   .route("/stock", stockRoute)
   .route("/clients", clientsRoute)
