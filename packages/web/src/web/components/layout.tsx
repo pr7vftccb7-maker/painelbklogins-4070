@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, Redirect } from "wouter";
-import { LayoutGrid, AlertTriangle, Settings, LogOut, Loader2, Menu, X, Boxes, Users, Wallet } from "lucide-react";
+import { LayoutGrid, AlertTriangle, Settings, LogOut, Loader2, Menu, X, Boxes, Users, Wallet, ClipboardList, ShoppingBag } from "lucide-react";
 import { authClient } from "../lib/auth";
 import { useSummary } from "../lib/accounts";
 import { api } from "../lib/api";
@@ -101,6 +101,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <NavItem href="/clientes" icon={Users} label="Clientes" active={location === "/clientes"} />
         <NavItem href="/estoque" icon={Boxes} label="Estoque" active={location === "/estoque"} />
         <NavItem href="/carteira" icon={Wallet} label="Carteira" active={location === "/carteira"} />
+
+        {/* Separador */}
+        <div className="my-2 border-t border-border/50" />
+
+        <NavItem
+          href="/loja"
+          icon={ShoppingBag}
+          label="Loja (Vitrine)"
+          active={location.startsWith("/loja")}
+        />
+        <NavItem
+          href="/pedidos"
+          icon={ClipboardList}
+          label="Pedidos da Loja"
+          active={location === "/pedidos"}
+        />
+
+        <div className="my-2 border-t border-border/50" />
+
         <NavItem
           href="/configuracoes"
           icon={Settings}
