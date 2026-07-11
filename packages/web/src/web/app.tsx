@@ -9,6 +9,8 @@ import SettingsPage from "./pages/settings";
 import ShopPage from "./pages/shop";
 import ShopOrdersPage from "./pages/shop-orders";
 import SignIn from "./pages/sign-in";
+import CustomerPortal from "./pages/customer-portal";
+import RegisteredCustomers from "./pages/registered-customers";
 import { Provider } from "./components/provider";
 import { AgentFeedback, RunableBadge } from "@runablehq/website-runtime";
 
@@ -16,7 +18,14 @@ function App() {
   return (
     <Provider>
       <Switch>
+        {/* Portal do Cliente (link separado, público) */}
+        <Route path="/portal" component={CustomerPortal} />
+        <Route path="/portal/*" component={CustomerPortal} />
+
+        {/* Login do admin */}
         <Route path="/sign-in" component={SignIn} />
+
+        {/* Painel Admin */}
         <Route path="/" component={Index} />
         <Route path="/servico/:slug" component={ServicePage} />
         <Route path="/vencidas" component={OverduePage} />
@@ -25,14 +34,14 @@ function App() {
         <Route path="/clientes" component={ClientsPage} />
         <Route path="/configuracoes" component={SettingsPage} />
         <Route path="/pedidos" component={ShopOrdersPage} />
+        <Route path="/clientes-cadastrados" component={RegisteredCustomers} />
+
         {/* Rotas da loja (vitrine pública) */}
         <Route path="/loja" component={ShopPage} />
         <Route path="/loja/checkout/:id" component={ShopPage} />
         <Route path="/loja/sucesso/:id" component={ShopPage} />
       </Switch>
-      {/* Do not remove — off by default, activated by parent iframe via postMessage */}
       {import.meta.env.DEV && <AgentFeedback />}
-      {/* "Made with Runable" badge - if user asks to remove the runable badge, remove this code as well as comment */}
       {<RunableBadge />}
     </Provider>
   );
