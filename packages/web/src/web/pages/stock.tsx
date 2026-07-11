@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "motion/react";
 import { toast } from "sonner";
-import { Boxes, Upload, Loader2, Trash2, Copy, Eye, EyeOff, Package, CheckCircle2, UserPlus, AlertTriangle, Tag, MessageCircle, Search, X, Sparkles, BadgeCheck, Check } from "lucide-react";
+import { Boxes, Upload, Loader2, Trash2, Copy, Eye, EyeOff, Package, CheckCircle2, UserPlus, AlertTriangle, Tag, MessageCircle, Search, X, Sparkles, BadgeCheck, Check, ShoppingCart, ShoppingBag } from "lucide-react";
 import { Layout } from "../components/layout";
 import { Button } from "../components/ui/button";
 import { Label } from "../components/ui/label";
@@ -13,10 +13,11 @@ import { SERVICE_MAP } from "../../shared/services";
 import { useServices, useServiceMap } from "../lib/services";
 import { logoUrl } from "../lib/utils";
 import { useStock, useStockSummary, useImportStock, useDeleteStock, useClearUsed, useAssignStock, useSetStockStatus, useActivateStock } from "../lib/stock";
+import { useToggleSale } from "../lib/shop";
 import type { StockAccount } from "../lib/stock";
 import { usePixInfo, type Account } from "../lib/accounts";
 import { buildWelcomeLink } from "../lib/charge";
-import { addMonthsKeepDay, todayISO } from "../lib/format";
+import { addMonthsKeepDay, todayISO, formatPrice } from "../lib/format";
 
 function ServiceLogo({ slug, size = "size-9" }: { slug: string; size?: string }) {
   const dynamicMap = useServiceMap();
@@ -53,6 +54,7 @@ export default function StockPage() {
   const assignMut = useAssignStock();
   const statusMut = useSetStockStatus();
   const activateMut = useActivateStock();
+  const toggleSaleMut = useToggleSale();
 
   const [importOpen, setImportOpen] = useState(false);
   const [importService, setImportService] = useState("netflix");
@@ -67,6 +69,44 @@ export default function StockPage() {
   // Modal "assinar email virgem"
   const [activateAccount, setActivateAccount] = useState<StockAccount | null>(null);
   const [activatePassword, setActivatePassword] = useState("");
+
+  // Modal toggle venda
+  const [saleAccount, setSaleAccount] = useState<StockAccount | null>(null);
+  const [salePrice, setSalePrice] = useState("");
+
+  function openToggleSale(s: StockAccount) {
+    setSaleAccount(s);
+    setSalePrice(s.salePriceCents ? String((s.salePriceCents / 100).toFixed(2).replace(".", ",")) : "");
+  }
+
+  async function doToggleSale() {
+    if (!saleAccount) return;
+    try {
+      const priceCents = salePrice
+        ? Math.round(parseFloat(salePrice.replace(",", ".")) * 100)
+        : saleAccount.salePriceCents;
+
+      const newForSale = !saleAccount.forSale;
+      if (newForSale && !priceCents) {
+        toast.error("Defina um preço para liberar a venda.");
+        return;
+      }
+
+      await toggleSaleMut.mutateAsync({
+        id: saleAccount.id,
+        forSale: newForSale,
+        salePriceCents: priceCents || undefined,
+      });
+      toast.success(
+        newForSale
+          ? `Conta ${saleAccount.email} liberada para venda na loja`
+          : `Conta ${saleAccount.email} removida da vitrine`,
+      );
+      setSaleAccount(null);
+    } catch {
+      toast.error("Falha ao alterar disponibilidade. Tente novamente.");
+    }
+  }
 
   function openActivate(s: StockAccount) {
     setActivateAccount(s);
@@ -473,6 +513,7 @@ export default function StockPage() {
                 <th className="px-4 py-3 font-medium">Email</th>
                 <th className="px-4 py-3 font-medium">Senha</th>
                 <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium text-center">Vitrine</th>
                 <th className="px-4 py-3 font-medium text-right">Ações</th>
               </tr>
             </thead>
@@ -538,6 +579,27 @@ export default function StockPage() {
                       <span className="inline-flex items-center gap-1 rounded-full bg-[#2fbf71]/15 px-2.5 py-1 text-xs font-medium text-[#2fbf71]">
                         Disponível
                       </span>
+                    )}
+                  </td>
+                  {/* Coluna Vitrine */}
+                  <td className="px-4 py-3 text-center">
+                    {s.status === "disponivel" ? (
+                      <button
+                        onClick={() => openToggleSale(s)}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                          (s as any).forSale
+                            ? "bg-primary/15 text-primary hover:bg-primary/25"
+                            : "bg-muted text-muted-foreground hover:bg-secondary/80 hover:text-foreground"
+                        }`}
+                        title={(s as any).forSale ? `R$ ${formatPrice((s as any).salePriceCents ?? 0)} — Clique para remover` : "Clique para liberar na loja"}
+                      >
+                        <ShoppingBag className="size-3" />
+                        {(s as any).forSale
+                          ? `R$ ${((s as any).salePriceCents ?? 0) > 0 ? formatPrice((s as any).salePriceCents) : "0,00"}`
+                          : "Vender"}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-muted-foreground/50">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -633,6 +695,23 @@ export default function StockPage() {
                       </button>
                     )}
                   </div>
+                  {s.status === "disponivel" && (
+                    <div className="mt-1.5">
+                      <button
+                        onClick={() => openToggleSale(s)}
+                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                          (s as any).forSale
+                            ? "bg-primary/15 text-primary"
+                            : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        <ShoppingBag className="size-3" />
+                        {(s as any).forSale
+                          ? `Na loja — R$ ${((s as any).salePriceCents ?? 0) > 0 ? formatPrice((s as any).salePriceCents) : "0,00"}`
+                          : "Liberar na loja"}
+                      </button>
+                    </div>
+                  )}
                   {s.status === "usada" && s.clientName && (
                     <div className="mt-1 text-xs text-muted-foreground">
                       Cliente: {s.clientCode ? `#${s.clientCode} ` : ""}
@@ -682,6 +761,67 @@ export default function StockPage() {
           </div>
         </div>
       )}
+
+      {/* Modal: Liberar para venda */}
+      <Modal
+        open={!!saleAccount}
+        onClose={() => setSaleAccount(null)}
+        title={(saleAccount as any)?.forSale ? "Gerenciar venda na loja" : "Liberar para venda na loja"}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setSaleAccount(null)}>
+              Cancelar
+            </Button>
+            <Button onClick={doToggleSale} disabled={toggleSaleMut.isPending}>
+              {toggleSaleMut.isPending && <Loader2 className="size-4 animate-spin" />}
+              {(saleAccount as any)?.forSale ? "Remover da loja" : "Liberar na loja"}
+            </Button>
+          </>
+        }
+      >
+        {saleAccount && (
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-secondary/30 p-3">
+              <ServiceLogo slug={saleAccount.service} size="size-8" />
+              <div className="min-w-0">
+                <div className="font-medium">{nameOf(saleAccount.service)}</div>
+                <div className="truncate text-sm text-muted-foreground">{saleAccount.email}</div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+              <ShoppingBag className="size-5 text-primary" />
+              <div>
+                <div className="text-sm font-medium">
+                  {(saleAccount as any).forSale
+                    ? "Esta conta está na vitrine da loja"
+                    : "Esta conta NÃO está na vitrine"}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {(saleAccount as any).forSale
+                    ? `Preço atual: R$ ${formatPrice((saleAccount as any).salePriceCents ?? 0)}`
+                    : "Nenhum preço definido para venda"}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label>Preço de venda (R$)</Label>
+              <Input
+                inputMode="decimal"
+                placeholder="29,90"
+                value={salePrice}
+                onChange={(e) => setSalePrice(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                {saleAccount.salePriceCents
+                  ? `Preço atual: ${formatPrice(saleAccount.salePriceCents)}. Deixe vazio para manter.`
+                  : "Defina o preço que aparecerá na vitrine da loja."}
+              </p>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* Modal de importação */}
       <Modal
